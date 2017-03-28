@@ -1,5 +1,8 @@
 #include <nan.h>
-
+#include <windows.h>
+#include <tchar.h>
+#include <iostream>
+#include <strsafe.h>
 using namespace v8;
 
 static WCHAR *windowClassName = L"DRAWERWINDOW";
@@ -350,6 +353,33 @@ void createDc(const Nan::FunctionCallbackInfo<Value>& args){
 	args.GetReturnValue().Set(Nan::New((int)hdc));
 }
 
+
+/**
+	Create Dc in silent mode (without show dialog select printer)
+	@author nam.tran
+    @version 18/01/2017
+	
+	@param printer name
+*/
+void createDcWithoutDialog(const Nan::FunctionCallbackInfo<Value>& args){
+	// createDc(devmode, devnames)
+	if( args.Length() < 2 ){
+		Nan::ThrowTypeError("wrong number of arguments");
+		return;
+	}	
+	LPCWSTR printerName = (LPCWSTR) * String::Value(args[1]->ToString());
+
+	HDC hdc = CreateDCW(NULL, printerName, NULL, NULL);
+
+	if( hdc == NULL ){
+		Nan::ThrowTypeError("createDC failed");
+		return;
+	}
+	args.GetReturnValue().Set(Nan::New((int)hdc));
+}
+
+
+
 void deleteDc(const Nan::FunctionCallbackInfo<Value>& args){
 	// deleteDc(hdc)
 	if( args.Length() < 1 ){
@@ -367,7 +397,7 @@ void deleteDc(const Nan::FunctionCallbackInfo<Value>& args){
 
 void beginPrint(const Nan::FunctionCallbackInfo<Value>& args){
 	// beginPrint(hdc)
-	if( args.Length() < 1 ){
+	if( args.Length() < 2 ){
 		Nan::ThrowTypeError("wrong number of arguments");
 		return;
 	}	
@@ -375,11 +405,13 @@ void beginPrint(const Nan::FunctionCallbackInfo<Value>& args){
 		Nan::ThrowTypeError("wrong arguments");
 		return;
 	}
+	LPCWSTR jobName = (LPCWSTR) * String::Value(args[1]->ToString());
+
 	HDC hdc = (HDC)args[0]->Int32Value();
 	DOCINFOW docinfo;
 	ZeroMemory(&docinfo, sizeof(docinfo));
 	docinfo.cbSize = sizeof(docinfo);
-	docinfo.lpszDocName = L"drawer printing";
+	docinfo.lpszDocName = jobName;
 	int ret = StartDocW(hdc, &docinfo);
 	if( ret <= 0 ){
 		Nan::ThrowTypeError("StartDoc failed");
@@ -505,6 +537,144 @@ void lineTo(const Nan::FunctionCallbackInfo<Value>& args){
 	}
 	args.GetReturnValue().Set(ok);
 }
+
+/**
+	Print Image from byte array
+	@author nam.tran
+    @version 20/01/2017
+	
+    @param HDC hdc
+	@param node buffer
+*/
+void printImageFromBytes(const Nan::FunctionCallbackInfo<Value>& args){
+	// Print image
+	if( args.Length() < 2 ){
+		Nan::ThrowTypeError("wrong number of arguments");
+		return;
+	}	
+	if( !args[0]->IsInt32() ){
+		Nan::ThrowTypeError("wrong arguments");
+		return;
+	}
+	HDC hdc = (HDC)args[0]->Int32Value();
+	int ret = StartPage(hdc);
+
+	// TODO nam.tran
+	// Create bitmap from byte
+	char* bytes = node::Buffer::Data(args[1]);
+
+	BITMAPFILEHEADER* bmfh;
+	bmfh = (BITMAPFILEHEADER*)bytes;
+
+	BITMAPINFOHEADER* bmih;
+	bmih = (BITMAPINFOHEADER*)(bytes + sizeof(BITMAPFILEHEADER));
+	BITMAPINFO* bmi;
+	bmi = (BITMAPINFO*)bmih;
+
+	void* bits;
+	bits = (void*)(bytes + bmfh->bfOffBits);
+	HBITMAP g_hbm = CreateDIBitmap(hdc, bmih, CBM_INIT, bits, bmi, DIB_RGB_COLORS) ;
+
+	if(g_hbm == NULL) {
+		Nan::ThrowTypeError("Could not load image....... ");
+		return;	
+	}
+	BITMAP bm;
+	PAINTSTRUCT ps;
+	HDC hdcMem = CreateCompatibleDC(hdc);
+
+	SetMapMode(hdc, MM_TEXT);
+
+
+	HBITMAP hbmOld = (HBITMAP)SelectObject(hdcMem, g_hbm);
+	GetObject(g_hbm, sizeof(bm), &bm);
+
+	int xwidth = GetDeviceCaps(hdc, HORZSIZE);
+
+	if (xwidth > 100) {
+		double scaleX = GetDeviceCaps(hdc, LOGPIXELSX) / 96;
+		double scaleY = GetDeviceCaps(hdc, LOGPIXELSY) / 96;
+		if ( bm.bmWidth * scaleX >= GetDeviceCaps(hdc, HORZRES)) {
+			StretchBlt(hdc, GetDeviceCaps(hdc, HORZRES)/2 - bm.bmWidth/2, 0,  bm.bmWidth, bm.bmHeight * scaleY, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY); 
+		} else {
+			StretchBlt(hdc, GetDeviceCaps(hdc, HORZRES)/2 - bm.bmWidth *  scaleX/2, 0,  bm.bmWidth * scaleX, bm.bmHeight * scaleY, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY); 
+		}
+	} else {
+		BitBlt(hdc, GetDeviceCaps(hdc, HORZRES)/2 - bm.bmWidth/2, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+	}
+
+	// int cxpage = GetDeviceCaps (hdc, HORZRES);
+	// int cypage = GetDeviceCaps (hdc, VERTRES);
+
+	// SetWindowExtEx(hdc, cxpage,cypage, NULL);
+	// SetViewportExtEx(hdc, cxpage, cypage,NULL);
+
+	// SetViewportOrgEx(hdc, 0, 0, NULL);
+	// StretchBlt(hdc, GetDeviceCaps(hdc, HORZRES)/2 - bm.bmWidth/2, 0,  bm.bmWidth , bm.bmHeight, hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY); 
+
+	
+
+
+	SelectObject(hdcMem, hbmOld);
+	DeleteDC(hdcMem);
+	// End TODO nam.tran
+}
+
+/**
+    Print Image from file path
+	@author nam.tran
+    @version 19/01/2017
+
+    @param HDC hdc
+	@param filePath
+*/
+void printImage(const Nan::FunctionCallbackInfo<Value>& args){
+	// Print image
+	if( args.Length() < 2 ){
+		Nan::ThrowTypeError("wrong number of arguments");
+		return;
+	}	
+	if( !args[0]->IsInt32() ){
+		Nan::ThrowTypeError("wrong arguments");
+		return;
+	}
+	HDC hdc = (HDC)args[0]->Int32Value();
+	int ret = StartPage(hdc);
+
+	// TODO nam.tran
+	
+	LPCSTR imagePath = (LPCSTR) * String::Utf8Value (args[1]->ToString());
+	std::cout <<   imagePath;
+
+	HBITMAP g_hbm =  (HBITMAP)LoadImage(NULL, _T(imagePath) ,IMAGE_BITMAP,0,0,LR_CREATEDIBSECTION | LR_DEFAULTSIZE | LR_LOADFROMFILE );
+	if(g_hbm == NULL) {
+		Nan::ThrowTypeError("Could not load image....... ");
+		return;	
+	}
+	BITMAP bm;
+	PAINTSTRUCT ps;
+	HDC hdcMem = CreateCompatibleDC(hdc);
+
+	SetMapMode(hdc, MM_LOENGLISH);
+
+	int dpix = GetDeviceCaps(hdc, LOGPIXELSX);
+	int dpiy = GetDeviceCaps(hdc, LOGPIXELSY);
+
+	int dpix1 = GetDeviceCaps(hdcMem, LOGPIXELSX);
+	int dpiy1 = GetDeviceCaps(hdcMem, LOGPIXELSY);
+
+	std::cout << static_cast<int>(1) << std::endl;
+
+
+	HBITMAP hbmOld = (HBITMAP)SelectObject(hdcMem, g_hbm);
+	GetObject(g_hbm, sizeof(bm), &bm);
+	BitBlt(hdc, GetDeviceCaps(hdc, HORZRES)/2 - bm.bmWidth/2, 0, bm.bmWidth, bm.bmHeight, hdcMem, 0, 0, SRCCOPY);
+	SelectObject(hdcMem, hbmOld);
+	DeleteDC(hdcMem);
+	// End TODO nam.tran
+}
+
+
 
 void textOut(const Nan::FunctionCallbackInfo<Value>& args){
 	// textOut(hdc, x, y, text)
@@ -642,6 +812,10 @@ void Init(v8::Local<v8::Object> exports){
 			Nan::New<v8::FunctionTemplate>(parseDevnames)->GetFunction());
 	exports->Set(Nan::New("createDc").ToLocalChecked(),
 			Nan::New<v8::FunctionTemplate>(createDc)->GetFunction());
+	// Nam.Tran
+	exports->Set(Nan::New("createDcWithoutDialog").ToLocalChecked(),
+			Nan::New<v8::FunctionTemplate>(createDcWithoutDialog)->GetFunction());
+	// End Nam.Tran
 	exports->Set(Nan::New("deleteDc").ToLocalChecked(),
 			Nan::New<v8::FunctionTemplate>(deleteDc)->GetFunction());
 	exports->Set(Nan::New("beginPrint").ToLocalChecked(),
@@ -660,6 +834,12 @@ void Init(v8::Local<v8::Object> exports){
 			Nan::New<v8::FunctionTemplate>(lineTo)->GetFunction());
 	exports->Set(Nan::New("textOut").ToLocalChecked(),
 			Nan::New<v8::FunctionTemplate>(textOut)->GetFunction());
+	// Nam.Tran
+	exports->Set(Nan::New("printImage").ToLocalChecked(),
+			Nan::New<v8::FunctionTemplate>(printImage)->GetFunction());
+	exports->Set(Nan::New("printImageFromBytes").ToLocalChecked(),
+			Nan::New<v8::FunctionTemplate>(printImageFromBytes)->GetFunction());
+	// End Nam.Tran
 	exports->Set(Nan::New("selectObject").ToLocalChecked(),
 			Nan::New<v8::FunctionTemplate>(selectObject)->GetFunction());
 	exports->Set(Nan::New("setTextColor").ToLocalChecked(),

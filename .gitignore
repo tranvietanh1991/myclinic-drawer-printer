@@ -4,5 +4,9 @@ printer-settings/
 test-out.json
 npm-debug.log
 
-
-
+# WebStorm
+**/.idea/
+.idea/
+**/.DS_Store
+*.DS_Store
+.DS_Store
